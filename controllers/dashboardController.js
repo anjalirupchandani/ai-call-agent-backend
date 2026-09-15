@@ -13,34 +13,46 @@ import {
 // GET /api/dashboard/stats
 export async function getStats(req, res) {
   try {
+    const period = ["today", "7d", "30d"].includes(req.query.period) ? req.query.period : "7d";
+    const dayCount = period === "today" ? 1 : period === "30d" ? 30 : 7;
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+    since.setDate(since.getDate() - dayCount + 1);
+
     const [callList, totalContacts, totalTemplates, activeTemplates] = await Promise.all([
-      Call.find({ userId: req.userId }).select("status duration createdAt"),
+      Call.find({ userId: req.userId, createdAt: { $gte: since } }).select("status duration createdAt"),
       Contact.countDocuments({ userId: req.userId }),
       Template.countDocuments({ userId: req.userId }),
       Template.countDocuments({ userId: req.userId, isActive: true }),
     ]);
 
-    const totalCalls     = callList.length;
+    const totalCalls = callList.length;
     const completedCalls = callList.filter((c) => c.status === "Completed").length;
-    const successRate    = totalCalls ? ((completedCalls / totalCalls) * 100).toFixed(1) + "%" : "0%";
-
+    const successRate = totalCalls ? `${((completedCalls / totalCalls) * 100).toFixed(1)}%` : "0%";
     const totalSecs = callList.reduce((sum, c) => {
       const [m, s] = (c.duration || "0:00").split(":").map(Number);
       return sum + (m || 0) * 60 + (s || 0);
     }, 0);
-    const hrs  = Math.floor(totalSecs / 3600);
+    const hrs = Math.floor(totalSecs / 3600);
     const mins = Math.floor((totalSecs % 3600) / 60);
+    const buckets = Array.from({ length: dayCount }, (_, index) => {
+      const date = new Date(since);
+      date.setDate(since.getDate() + index);
+      return {
+        day: dayCount === 1 ? "Today" : dayCount === 7 ? date.toLocaleDateString("en-US", { weekday: "short" }) : date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        dateKey: date.toISOString().slice(0, 10),
+        completed: 0,
+        missed: 0,
+        failed: 0,
+      };
+    });
 
-    // Last 7 days call volume by day
-    const days    = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const buckets = days.map((day) => ({ day, calls: 0, completed: 0 }));
-    const now     = new Date();
-    callList.forEach((c) => {
-      const diff = Math.floor((now - new Date(c.createdAt)) / 86_400_000);
-      if (diff < 0 || diff > 6) return;
-      const b = buckets[new Date(c.createdAt).getDay()];
-      b.calls += 1;
-      if (c.status === "Completed") b.completed += 1;
+    callList.forEach((call) => {
+      const bucket = buckets.find((item) => item.dateKey === new Date(call.createdAt).toISOString().slice(0, 10));
+      if (!bucket) return;
+      if (call.status === "Completed") bucket.completed += 1;
+      if (call.status === "Missed") bucket.missed += 1;
+      if (call.status === "Failed") bucket.failed += 1;
     });
 
     res.json({
@@ -48,14 +60,14 @@ export async function getStats(req, res) {
         totalCalls,
         completedCalls,
         successRate,
-        totalDuration:    `${hrs}h ${String(mins).padStart(2, "0")}m`,
+        totalDuration: `${hrs}h ${String(mins).padStart(2, "0")}m`,
         totalContacts,
         totalTemplates,
         activeTemplates,
-        totalCallsDelta:      "",
-        completedCallsDelta:  "",
-        totalDurationDelta:   "",
-        successRateDelta:     "",
+        totalCallsDelta: "",
+        completedCallsDelta: "",
+        totalDurationDelta: "",
+        successRateDelta: "",
       },
       overview: buckets,
     });
