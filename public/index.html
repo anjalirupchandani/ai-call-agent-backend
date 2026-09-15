@@ -1,0 +1,1029 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Call Agent — API Explorer</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Segoe UI", sans-serif;
+        background: #0f1117;
+        color: #e2e8f0;
+        min-height: 100vh;
+      }
+
+      header {
+        background: #1a1d27;
+        border-bottom: 1px solid #2d3148;
+        padding: 16px 32px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      header h1 {
+        font-size: 18px;
+        font-weight: 600;
+        color: #fff;
+      }
+      header span {
+        font-size: 12px;
+        background: #22c55e22;
+        color: #22c55e;
+        border: 1px solid #22c55e44;
+        border-radius: 20px;
+        padding: 2px 10px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        min-height: calc(100vh - 57px);
+      }
+
+      /* Sidebar */
+      .sidebar {
+        background: #13151f;
+        border-right: 1px solid #2d3148;
+        padding: 16px 0;
+        overflow-y: auto;
+      }
+      .sidebar-section {
+        padding: 8px 16px 4px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #64748b;
+      }
+      .sidebar a {
+        display: block;
+        padding: 7px 16px;
+        font-size: 13px;
+        color: #94a3b8;
+        text-decoration: none;
+        cursor: pointer;
+        border-left: 3px solid transparent;
+        transition: all 0.15s;
+      }
+      .sidebar a:hover {
+        background: #1e2235;
+        color: #e2e8f0;
+      }
+      .sidebar a.active {
+        background: #1e2235;
+        color: #818cf8;
+        border-left-color: #818cf8;
+      }
+      .method-badge {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 3px;
+        margin-right: 6px;
+        min-width: 42px;
+        text-align: center;
+      }
+      .GET {
+        background: #16423033;
+        color: #34d399;
+        border: 1px solid #34d39933;
+      }
+      .POST {
+        background: #1e3a5f33;
+        color: #60a5fa;
+        border: 1px solid #60a5fa33;
+      }
+      .PUT {
+        background: #3d2a1033;
+        color: #fbbf24;
+        border: 1px solid #fbbf2433;
+      }
+      .PATCH {
+        background: #3d2a1033;
+        color: #fb923c;
+        border: 1px solid #fb923c33;
+      }
+      .DELETE {
+        background: #3d101033;
+        color: #f87171;
+        border: 1px solid #f8717133;
+      }
+
+      /* Main */
+      .main {
+        padding: 28px 32px;
+        overflow-y: auto;
+      }
+
+      /* Auth box */
+      .auth-box {
+        background: #1a1d27;
+        border: 1px solid #2d3148;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 24px;
+      }
+      .auth-box h2 {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        color: #fff;
+      }
+      .auth-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+      }
+      .auth-row input {
+        background: #0f1117;
+        border: 1px solid #2d3148;
+        color: #e2e8f0;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        flex: 1;
+        min-width: 160px;
+      }
+      .auth-row input:focus {
+        outline: none;
+        border-color: #818cf8;
+      }
+      .btn {
+        padding: 8px 18px;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+      .btn:hover {
+        opacity: 0.85;
+      }
+      .btn-primary {
+        background: #818cf8;
+        color: #fff;
+      }
+      .btn-success {
+        background: #22c55e;
+        color: #fff;
+      }
+      .btn-danger {
+        background: #ef4444;
+        color: #fff;
+      }
+      .btn-sm {
+        padding: 6px 14px;
+        font-size: 12px;
+      }
+      .token-display {
+        margin-top: 10px;
+        font-size: 11px;
+        color: #64748b;
+        word-break: break-all;
+      }
+      .token-display span {
+        color: #22c55e;
+      }
+
+      /* Request panel */
+      .panel {
+        background: #1a1d27;
+        border: 1px solid #2d3148;
+        border-radius: 10px;
+        padding: 24px;
+      }
+      .panel h2 {
+        font-size: 16px;
+        font-weight: 600;
+        color: #fff;
+        margin-bottom: 4px;
+      }
+      .panel .desc {
+        font-size: 12px;
+        color: #64748b;
+        margin-bottom: 18px;
+      }
+
+      .url-bar {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .url-bar .method-label {
+        background: #0f1117;
+        border: 1px solid #2d3148;
+        border-radius: 6px;
+        padding: 8px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        min-width: 80px;
+        text-align: center;
+      }
+      .url-bar input {
+        flex: 1;
+        background: #0f1117;
+        border: 1px solid #2d3148;
+        color: #e2e8f0;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      .url-bar input:focus {
+        outline: none;
+        border-color: #818cf8;
+      }
+
+      label {
+        font-size: 12px;
+        color: #94a3b8;
+        display: block;
+        margin-bottom: 5px;
+        margin-top: 12px;
+      }
+      textarea {
+        width: 100%;
+        background: #0f1117;
+        border: 1px solid #2d3148;
+        color: #e2e8f0;
+        padding: 10px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-family: "Consolas", monospace;
+        resize: vertical;
+        min-height: 100px;
+      }
+      textarea:focus {
+        outline: none;
+        border-color: #818cf8;
+      }
+
+      .send-row {
+        margin-top: 16px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .status-pill {
+        font-size: 12px;
+        font-weight: 700;
+        padding: 4px 12px;
+        border-radius: 20px;
+      }
+      .status-2xx {
+        background: #16423044;
+        color: #34d399;
+        border: 1px solid #34d39944;
+      }
+      .status-4xx {
+        background: #3d101044;
+        color: #f87171;
+        border: 1px solid #f8717144;
+      }
+      .status-5xx {
+        background: #3d101044;
+        color: #fb923c;
+        border: 1px solid #fb923c44;
+      }
+
+      .response-box {
+        margin-top: 16px;
+        background: #0f1117;
+        border: 1px solid #2d3148;
+        border-radius: 6px;
+        padding: 14px;
+        font-size: 12px;
+        font-family: "Consolas", monospace;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 400px;
+        overflow-y: auto;
+        color: #a5f3fc;
+      }
+
+      .placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 60vh;
+        color: #334155;
+        text-align: center;
+        gap: 10px;
+      }
+      .placeholder svg {
+        opacity: 0.3;
+      }
+      .placeholder p {
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AI Call Agent — API Explorer</h1>
+      <span>Local</span>
+    </header>
+
+    <div class="layout">
+      <!-- Sidebar -->
+      <nav class="sidebar" id="sidebar">
+        <div class="sidebar-section">Auth</div>
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/auth/signup"
+          data-title="Sign Up"
+          data-body='{"name": "Test User", "email": "test@test.com", "password": "password123"}'
+          data-desc="Register a new user"
+          ><span class="method-badge POST">POST</span>/auth/signup</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/auth/login"
+          data-title="Login"
+          data-body='{"email": "test@test.com", "password": "password123"}'
+          data-desc="Login and get JWT token"
+          ><span class="method-badge POST">POST</span>/auth/login</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/auth/me"
+          data-title="Current User"
+          data-body=""
+          data-desc="Get the logged-in user"
+          ><span class="method-badge GET">GET</span>/auth/me</a
+        >
+
+        <div class="sidebar-section">Calls</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/calls"
+          data-title="List Calls"
+          data-body=""
+          data-desc="List all calls"
+          ><span class="method-badge GET">GET</span>/calls</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/calls/:id"
+          data-title="Get Call"
+          data-body=""
+          data-desc="Get a single call by ID"
+          ><span class="method-badge GET">GET</span>/calls/:id</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/calls/start"
+          data-title="Start Call"
+          data-body='{"phone": "+1234567890", "contactName": "John Doe", "purpose": "Follow up"}'
+          data-desc="Start an outbound call"
+          ><span class="method-badge POST">POST</span>/calls/start</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/calls/:id/end"
+          data-title="End Call"
+          data-body=""
+          data-desc="End a call by ID"
+          ><span class="method-badge POST">POST</span>/calls/:id/end</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/calls/:id"
+          data-title="Delete Call"
+          data-body=""
+          data-desc="Delete a call by ID"
+          ><span class="method-badge DELETE">DELETE</span>/calls/:id</a
+        >
+
+        <div class="sidebar-section">Contacts</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/contacts"
+          data-title="List Contacts"
+          data-body=""
+          data-desc="List all contacts"
+          ><span class="method-badge GET">GET</span>/contacts</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/contacts?search="
+          data-title="Search Contacts"
+          data-body=""
+          data-desc="Search contacts by name/phone/email"
+          ><span class="method-badge GET">GET</span>/contacts?search=</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/contacts/:id"
+          data-title="Get Contact"
+          data-body=""
+          data-desc="Get a contact by ID"
+          ><span class="method-badge GET">GET</span>/contacts/:id</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/contacts"
+          data-title="Create Contact"
+          data-body='{"name": "Jane Doe", "phone": "+1234567890", "email": "jane@example.com", "tag": "Lead", "company": "Acme Inc"}'
+          data-desc="Create a new contact"
+          ><span class="method-badge POST">POST</span>/contacts</a
+        >
+        <a
+          href="#"
+          data-method="PUT"
+          data-url="/api/contacts/:id"
+          data-title="Update Contact"
+          data-body='{"name": "Jane Updated", "tag": "Customer"}'
+          data-desc="Update a contact"
+          ><span class="method-badge PUT">PUT</span>/contacts/:id</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/contacts/:id"
+          data-title="Delete Contact"
+          data-body=""
+          data-desc="Delete a contact"
+          ><span class="method-badge DELETE">DELETE</span>/contacts/:id</a
+        >
+        <a
+          href="#"
+          data-method="PATCH"
+          data-url="/api/contacts/:id/toggle"
+          data-title="Toggle Status"
+          data-body=""
+          data-desc="Toggle contact active/inactive"
+          ><span class="method-badge PATCH">PATCH</span>/contacts/:id/toggle</a
+        >
+
+        <div class="sidebar-section">Templates</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/templates"
+          data-title="List Templates"
+          data-body=""
+          data-desc="List all templates"
+          ><span class="method-badge GET">GET</span>/templates</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/templates"
+          data-title="Create Template"
+          data-body='{"name": "Sales Call", "type": "call", "content": "Hello, I am calling about...", "tags": ["sales"]}'
+          data-desc="Create a template"
+          ><span class="method-badge POST">POST</span>/templates</a
+        >
+        <a
+          href="#"
+          data-method="PUT"
+          data-url="/api/templates/:id"
+          data-title="Update Template"
+          data-body='{"name": "Updated Name"}'
+          data-desc="Update a template"
+          ><span class="method-badge PUT">PUT</span>/templates/:id</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/templates/:id"
+          data-title="Delete Template"
+          data-body=""
+          data-desc="Delete a template"
+          ><span class="method-badge DELETE">DELETE</span>/templates/:id</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/templates/:id/duplicate"
+          data-title="Duplicate Template"
+          data-body=""
+          data-desc="Duplicate a template"
+          ><span class="method-badge POST">POST</span
+          >/templates/:id/duplicate</a
+        >
+
+        <div class="sidebar-section">Pathways</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/pathways"
+          data-title="List Pathways"
+          data-body=""
+          data-desc="List all saved pathways"
+          ><span class="method-badge GET">GET</span>/pathways</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/pathways/:id"
+          data-title="Get Pathway"
+          data-body=""
+          data-desc="Get a single pathway by ID"
+          ><span class="method-badge GET">GET</span>/pathways/:id</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/pathways"
+          data-title="Create Pathway"
+          data-body='{"name": "agent", "nodes": [], "edges": []}'
+          data-desc="Create a new pathway"
+          ><span class="method-badge POST">POST</span>/pathways</a
+        >
+        <a
+          href="#"
+          data-method="PUT"
+          data-url="/api/pathways/:id"
+          data-title="Update Pathway"
+          data-body='{"name": "agent", "nodes": [], "edges": []}'
+          data-desc="Update a pathway"
+          ><span class="method-badge PUT">PUT</span>/pathways/:id</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/pathways/:id"
+          data-title="Delete Pathway"
+          data-body=""
+          data-desc="Delete a pathway"
+          ><span class="method-badge DELETE">DELETE</span>/pathways/:id</a
+        >
+
+        <div class="sidebar-section">Campaigns</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/campaigns"
+          data-title="List Campaigns"
+          data-body=""
+          data-desc="List all campaigns"
+          ><span class="method-badge GET">GET</span>/campaigns</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/campaigns"
+          data-title="Create Campaign"
+          data-body='{"name": "My Campaign", "templateName": "Sales Call", "concurrency": 1, "pacingSeconds": 5, "contacts": [{"name": "John", "phone": "+1234567890"}]}'
+          data-desc="Create a campaign"
+          ><span class="method-badge POST">POST</span>/campaigns</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/campaigns/:id/start"
+          data-title="Start Campaign"
+          data-body=""
+          data-desc="Start a campaign"
+          ><span class="method-badge POST">POST</span>/campaigns/:id/start</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/campaigns/:id/pause"
+          data-title="Pause Campaign"
+          data-body=""
+          data-desc="Pause a campaign"
+          ><span class="method-badge POST">POST</span>/campaigns/:id/pause</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/campaigns/:id"
+          data-title="Delete Campaign"
+          data-body=""
+          data-desc="Delete a campaign"
+          ><span class="method-badge DELETE">DELETE</span>/campaigns/:id</a
+        >
+
+        <div class="sidebar-section">Scheduled Calls</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/scheduled-calls"
+          data-title="List Scheduled"
+          data-body=""
+          data-desc="List all scheduled calls"
+          ><span class="method-badge GET">GET</span>/scheduled-calls</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/scheduled-calls"
+          data-title="Schedule Call"
+          data-body='{"phoneNumber": "+1234567890", "name": "John Doe", "scheduledAt": "2026-12-01T10:00:00.000Z", "notes": "Callback request"}'
+          data-desc="Schedule a call"
+          ><span class="method-badge POST">POST</span>/scheduled-calls</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/scheduled-calls/:id"
+          data-title="Delete Scheduled"
+          data-body=""
+          data-desc="Delete a scheduled call"
+          ><span class="method-badge DELETE">DELETE</span
+          >/scheduled-calls/:id</a
+        >
+
+        <div class="sidebar-section">Knowledge</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/knowledge"
+          data-title="List Articles"
+          data-body=""
+          data-desc="List knowledge articles"
+          ><span class="method-badge GET">GET</span>/knowledge</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/knowledge/:id"
+          data-title="Delete Article"
+          data-body=""
+          data-desc="Delete an article"
+          ><span class="method-badge DELETE">DELETE</span>/knowledge/:id</a
+        >
+
+        <div class="sidebar-section">Notifications</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/notifications"
+          data-title="List Notifications"
+          data-body=""
+          data-desc="List all notifications"
+          ><span class="method-badge GET">GET</span>/notifications</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/notifications/unread-count"
+          data-title="Unread Count"
+          data-body=""
+          data-desc="Get unread notification count"
+          ><span class="method-badge GET">GET</span
+          >/notifications/unread-count</a
+        >
+        <a
+          href="#"
+          data-method="PATCH"
+          data-url="/api/notifications/read-all"
+          data-title="Mark All Read"
+          data-body=""
+          data-desc="Mark all notifications as read"
+          ><span class="method-badge PATCH">PATCH</span
+          >/notifications/read-all</a
+        >
+        <a
+          href="#"
+          data-method="DELETE"
+          data-url="/api/notifications"
+          data-title="Clear All"
+          data-body=""
+          data-desc="Clear all notifications"
+          ><span class="method-badge DELETE">DELETE</span>/notifications</a
+        >
+
+        <div class="sidebar-section">Dashboard</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/dashboard/stats"
+          data-title="Stats"
+          data-body=""
+          data-desc="Get dashboard stats"
+          ><span class="method-badge GET">GET</span>/dashboard/stats</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/dashboard/overview"
+          data-title="Overview"
+          data-body=""
+          data-desc="Get dashboard overview"
+          ><span class="method-badge GET">GET</span>/dashboard/overview</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/dashboard/recent"
+          data-title="Recent Activity"
+          data-body=""
+          data-desc="Get recent activity"
+          ><span class="method-badge GET">GET</span>/dashboard/recent</a
+        >
+
+        <div class="sidebar-section">Users</div>
+        <a
+          href="#"
+          data-method="PUT"
+          data-url="/api/users/profile"
+          data-title="Update Profile"
+          data-body='{"name": "New Name", "email": "new@email.com"}'
+          data-desc="Update user profile"
+          ><span class="method-badge PUT">PUT</span>/users/profile</a
+        >
+        <a
+          href="#"
+          data-method="POST"
+          data-url="/api/users/change-password"
+          data-title="Change Password"
+          data-body='{"currentPassword": "password123", "newPassword": "newpassword123"}'
+          data-desc="Change password"
+          ><span class="method-badge POST">POST</span>/users/change-password</a
+        >
+
+        <div class="sidebar-section">Misc</div>
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/health"
+          data-title="Health Check"
+          data-body=""
+          data-desc="Server health check"
+          ><span class="method-badge GET">GET</span>/health</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/agents"
+          data-title="List Agents"
+          data-body=""
+          data-desc="List mock AI agents"
+          ><span class="method-badge GET">GET</span>/agents</a
+        >
+        <a
+          href="#"
+          data-method="GET"
+          data-url="/api/phone-numbers"
+          data-title="Phone Numbers"
+          data-body=""
+          data-desc="List mock phone numbers"
+          ><span class="method-badge GET">GET</span>/phone-numbers</a
+        >
+      </nav>
+
+      <!-- Main -->
+      <main class="main">
+        <!-- Auth box -->
+        <div class="auth-box">
+          <h2>🔐 Authentication</h2>
+          <div class="auth-row">
+            <input
+              id="auth-email"
+              type="email"
+              placeholder="Email"
+              value="test@test.com"
+            />
+            <input
+              id="auth-password"
+              type="password"
+              placeholder="Password"
+              value="password123"
+            />
+            <input
+              id="auth-name"
+              type="text"
+              placeholder="Name (signup only)"
+              value="Test User"
+            />
+            <button class="btn btn-success btn-sm" onclick="doSignup()">
+              Sign Up
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="doLogin()">
+              Login
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="clearToken()">
+              Clear Token
+            </button>
+          </div>
+          <div class="token-display" id="token-display">
+            No token — login or sign up first.
+          </div>
+        </div>
+
+        <!-- Request panel -->
+        <div class="panel" id="panel">
+          <div class="placeholder">
+            <svg
+              width="48"
+              height="48"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.5"
+                d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+              />
+            </svg>
+            <p>Select an endpoint from the sidebar to get started</p>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      let token = localStorage.getItem("api_token") || "";
+      updateTokenDisplay();
+
+      function updateTokenDisplay() {
+        const el = document.getElementById("token-display");
+        if (token) {
+          el.innerHTML = "✅ Token: <span>" + token.slice(0, 40) + "...</span>";
+        } else {
+          el.textContent = "No token — login or sign up first.";
+        }
+      }
+
+      function clearToken() {
+        token = "";
+        localStorage.removeItem("api_token");
+        updateTokenDisplay();
+      }
+
+      async function doSignup() {
+        const name = document.getElementById("auth-name").value;
+        const email = document.getElementById("auth-email").value;
+        const password = document.getElementById("auth-password").value;
+        try {
+          const res = await fetch("/api/auth/signup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, email, password }),
+          });
+          const data = await res.json();
+          if (data.token) {
+            token = data.token;
+            localStorage.setItem("api_token", token);
+            updateTokenDisplay();
+            alert("Signed up and logged in!");
+          } else alert(data.message || "Signup failed");
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      }
+
+      async function doLogin() {
+        const email = document.getElementById("auth-email").value;
+        const password = document.getElementById("auth-password").value;
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password }),
+          });
+          const data = await res.json();
+          if (data.token) {
+            token = data.token;
+            localStorage.setItem("api_token", token);
+            updateTokenDisplay();
+            alert("Logged in successfully!");
+          } else alert(data.message || "Login failed");
+        } catch (e) {
+          alert("Error: " + e.message);
+        }
+      }
+
+      // Sidebar endpoint navigation
+      document.querySelectorAll(".sidebar a[data-method]").forEach((link) => {
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          load(
+            this.dataset.method,
+            this.dataset.url,
+            this.dataset.title,
+            this.dataset.body,
+            this.dataset.desc,
+            this,
+          );
+        });
+      });
+
+      let currentMethod = "GET";
+      let currentUrl = "";
+
+      function load(method, url, title, body, desc, activeLink) {
+        currentMethod = method;
+        currentUrl = url;
+
+        // highlight sidebar
+        document
+          .querySelectorAll(".sidebar a")
+          .forEach((a) => a.classList.remove("active"));
+        if (activeLink) activeLink.classList.add("active");
+
+        const colors = {
+          GET: "#34d399",
+          POST: "#60a5fa",
+          PUT: "#fbbf24",
+          PATCH: "#fb923c",
+          DELETE: "#f87171",
+        };
+        const color = colors[method] || "#e2e8f0";
+
+        const bodySection =
+          method !== "GET" && method !== "DELETE"
+            ? `<label>Request Body (JSON)</label>
+         <textarea id="req-body" rows="6">${body || ""}</textarea>`
+            : "";
+
+        document.getElementById("panel").innerHTML = `
+      <h2>${title}</h2>
+      <p class="desc">${desc}</p>
+      <div class="url-bar">
+        <div class="method-label" style="color:${color}">${method}</div>
+        <input id="req-url" type="text" value="${url}" />
+      </div>
+      ${bodySection}
+      <div class="send-row">
+        <button class="btn btn-primary" onclick="sendRequest()">Send Request</button>
+        <span id="status-pill"></span>
+      </div>
+      <div id="response-box" style="display:none" class="response-box"></div>
+    `;
+      }
+
+      async function sendRequest() {
+        const url = document.getElementById("req-url").value;
+        const method = currentMethod;
+        const bodyEl = document.getElementById("req-body");
+        const body = bodyEl ? bodyEl.value.trim() : null;
+
+        const headers = { "Content-Type": "application/json" };
+        if (token) headers["Authorization"] = "Bearer " + token;
+
+        const opts = { method, headers };
+        if (body && method !== "GET" && method !== "DELETE") opts.body = body;
+
+        const statusEl = document.getElementById("status-pill");
+        const responseEl = document.getElementById("response-box");
+
+        statusEl.textContent = "Sending...";
+        statusEl.className = "status-pill";
+
+        try {
+          const res = await fetch(url, opts);
+          const text = await res.text();
+          let pretty = text;
+          try {
+            pretty = JSON.stringify(JSON.parse(text), null, 2);
+          } catch {}
+
+          const cls =
+            res.status < 300
+              ? "status-2xx"
+              : res.status < 500
+                ? "status-4xx"
+                : "status-5xx";
+          statusEl.textContent = res.status + " " + res.statusText;
+          statusEl.className = "status-pill " + cls;
+
+          responseEl.style.display = "block";
+          responseEl.textContent = pretty;
+
+          // auto-save token if login/signup
+          try {
+            const json = JSON.parse(text);
+            if (json.token) {
+              token = json.token;
+              localStorage.setItem("api_token", token);
+              updateTokenDisplay();
+            }
+          } catch {}
+        } catch (e) {
+          statusEl.textContent = "Network Error";
+          statusEl.className = "status-pill status-5xx";
+          responseEl.style.display = "block";
+          responseEl.textContent = e.message;
+        }
+      }
+    </script>
+  </body>
+</html>
