@@ -1,9 +1,15 @@
-// controllers/callController.js — Cognidom + MongoDB
+// controllers/callController.js — Edesy + MongoDB
 import mongoose from "mongoose";
 import Call from "../lib/models/Call.js";
-import Pathway from "../lib/models/Pathway.js";
-import { startCall  , stopCall, getCallDetails } from "../lib/cognidom.js";
-import KnowledgeArticle from "../lib/models/KnowledgeArticle.js";
+
+import {
+  EdesyError,
+  placeOutboundCall,
+  getCallStatus as getEdesyCallStatus,
+  endCall as endEdesyCall,
+  normalizePhoneNumber,
+  isFinalStatus,
+} from "../lib/edesy.js";
 
 function formatDate(date) {
   return new Date(date).toLocaleDateString("en-US", {
@@ -29,15 +35,17 @@ function docToRow(doc) {
     status: doc.status,
     type: doc.type,
     agent: doc.agent,
+    callId: doc.executionId || "",
+    summary: doc.summary || "",
+    provider: doc.provider || "",
   };
 }
 
-// Finds a call by MongoDB _id OR by RabbitCalls executionId
+// Finds a call by MongoDB _id OR by the Edesy conversationId stored in executionId
 async function findCall(id, userId) {
   if (mongoose.Types.ObjectId.isValid(id)) {
     return Call.findOne({ _id: id, userId });
   }
-  // fallback: look up by executionId (RabbitCalls call ID)
   return Call.findOne({ executionId: id, userId });
 }
 
@@ -53,129 +61,288 @@ export async function listCalls(req, res) {
   }
 }
 
-// GET /api/calls/:id
+// ── Edesy ─────────────────────────────────────────────────────────────────────
+
+// A second call to the same number inside this window is treated as an
+// accidental double-click and rejected — every call costs Edesy credits.
+const DUPLICATE_WINDOW_MS = 60_000;
+// Stop asking Edesy about a finished call once it is this old (summary/transcript
+// that still haven't appeared by then are not going to).
+const SYNC_MAX_AGE_MS = 60 * 60_000;
+
+// One in-flight "start call" per user, so two requests racing each other can't
+// both pass the duplicate check below before either has been saved.
+const startingCalls = new Set();
+
+function validateVariables(input) {
+  if (input === undefined || input === null) return { ok: true, value: {} };
+  if (typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, error: "Variables must be a set of name/value pairs." };
+  }
+  const entries = Object.entries(input);
+  if (entries.length > 25) {
+    return { ok: false, error: "Too many variables (maximum 25)." };
+  }
+  const out = {};
+  for (const [rawKey, rawVal] of entries) {
+    const key = String(rawKey).trim();
+    if (!key) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,49}$/.test(key)) {
+      return {
+        ok: false,
+        error: `Variable name "${key.slice(0, 30)}" is invalid. Use letters, numbers and underscores only, starting with a letter.`,
+      };
+    }
+    if (rawVal === undefined || rawVal === null) continue;
+    const val = String(rawVal).trim().slice(0, 500);
+    if (val) out[key] = val;
+  }
+  return { ok: true, value: out };
+}
+
+// POST /api/calls
+// Body: { phoneNumber, customerName?, purpose?, variables? }
+// Places ONE real outbound call through Edesy. No retries, no background work.
+export async function createEdesyCall(req, res) {
+  const lockKey = String(req.userId);
+
+  try {
+    const { phoneNumber, customerName, purpose, variables } = req.body || {};
+
+    const phone = normalizePhoneNumber(phoneNumber);
+    if (!phone.ok) {
+      return res.status(400).json({ success: false, message: phone.error, code: "INVALID_PHONE" });
+    }
+
+    const vars = validateVariables(variables);
+    if (!vars.ok) {
+      return res.status(400).json({ success: false, message: vars.error, code: "INVALID_VARIABLES" });
+    }
+
+    const name = typeof customerName === "string" ? customerName.trim().slice(0, 100) : "";
+    const callPurpose = typeof purpose === "string" ? purpose.trim().slice(0, 200) : "";
+
+    // The customer's name is the most common variable, so send it automatically
+    // unless the caller supplied their own customer_name.
+    const callVariables = { ...vars.value };
+    if (name && callVariables.customer_name === undefined) callVariables.customer_name = name;
+
+    const metadata = callPurpose ? { purpose: callPurpose } : undefined;
+
+    if (startingCalls.has(lockKey)) {
+      return res.status(429).json({
+        success: false,
+        message: "A call request is already in progress. Please wait for it to finish.",
+        code: "CALL_IN_PROGRESS",
+      });
+    }
+    startingCalls.add(lockKey);
+
+    try {
+      const recent = await Call.findOne({
+        userId: req.userId,
+        provider: "edesy",
+        phone: phone.value,
+        createdAt: { $gte: new Date(Date.now() - DUPLICATE_WINDOW_MS) },
+      }).select("_id executionId");
+
+      if (recent) {
+        return res.status(429).json({
+          success: false,
+          message: "You already started a call to this number less than a minute ago. Check Call History before calling again.",
+          code: "DUPLICATE_CALL",
+        });
+      }
+
+      const result = await placeOutboundCall(phone.value, callVariables, { metadata });
+
+      let doc;
+      try {
+        doc = await Call.create({
+          executionId: result.conversationId,
+          provider: "edesy",
+          providerStatus: result.status,
+          providerAgentId: String(result.agentId),
+          callSid: result.callSid,
+          contact: name || "Unknown",
+          phone: phone.value,
+          purpose: callPurpose,
+          status: "In Progress",
+          duration: "0:00",
+          type: "Outbound",
+          agent: "Edesy AI Agent",
+          userId: req.userId,
+        });
+      } catch (dbErr) {
+        // The call IS in progress on Edesy; only our record failed. Say so
+        // clearly so the user doesn't click again and pay for a second call.
+        console.error("[edesy] Call placed but saving to MongoDB failed:", dbErr.message);
+        return res.status(500).json({
+          success: false,
+          message: `The call was placed (ID ${result.conversationId}) but couldn't be saved to your history. Do not retry — check the Edesy dashboard.`,
+          code: "SAVE_FAILED",
+          conversationId: result.conversationId,
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        conversationId: result.conversationId,
+        status: result.status,
+        // Same fields the existing frontend flow already uses:
+        callId: result.conversationId,
+        dbId: doc._id,
+      });
+    } finally {
+      startingCalls.delete(lockKey);
+    }
+  } catch (err) {
+    if (err instanceof EdesyError) {
+      return res.status(err.status).json({ success: false, message: err.message, code: err.code });
+    }
+    console.error("[edesy] createEdesyCall unexpected error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong while starting the call. Check Call History before trying again.",
+      code: "INTERNAL",
+    });
+  }
+}
+
+// Refreshes an Edesy call record from Edesy. Only talks to Edesy while it can
+// still learn something: the call is unfinished, or it finished recently and its
+// summary/transcript haven't arrived yet. Never throws — on any Edesy error the
+// last known state is kept, and a warning message is returned for the UI.
+async function syncEdesyCall(doc) {
+  const finished = isFinalStatus(doc.status);
+  const hasPostCallData = Boolean(doc.summary) || (doc.transcript && doc.transcript.length > 0);
+  const recent = Date.now() - new Date(doc.createdAt).getTime() < SYNC_MAX_AGE_MS;
+
+  if (!doc.executionId || (finished && (hasPostCallData || !recent))) return null;
+
+  try {
+    const d = await getEdesyCallStatus(doc.executionId);
+
+    doc.status = d.status;
+    doc.providerStatus = d.providerStatus || doc.providerStatus;
+    if (d.disposition) doc.disposition = d.disposition;
+    if (d.callSid) doc.callSid = d.callSid;
+    if (d.duration) doc.duration = d.duration;
+    if (d.summary) doc.summary = d.summary;
+    if (d.recordingUrl) doc.recordingUrl = d.recordingUrl;
+    if (d.transcript.length > 0) doc.transcript = d.transcript;
+
+    if (doc.isModified()) await doc.save();
+    return null;
+  } catch (err) {
+    console.warn(`[edesy] status sync failed for ${doc.executionId}: ${err.message}`);
+    return err instanceof EdesyError ? err.message : "Couldn't refresh the call status.";
+  }
+}
+
+// GET /api/calls/:id   (:id = MongoDB _id or the Edesy conversationId)
 export async function getCall(req, res) {
   try {
     const doc = await findCall(req.params.id, req.userId);
     if (!doc) return res.status(404).json({ message: "Call not found" });
 
-    let callDetail = null;
-    if (doc.executionId) {
-      callDetail = await getCallDetails(doc.executionId).catch(() => null);
+    let syncError = null;
+    if (doc.provider === "edesy") {
+      syncError = await syncEdesyCall(doc);
     }
 
     res.json({
       id: doc._id,
       executionId: doc.executionId,
       contact: {
-        name: callDetail?.contact?.name || doc.contact,
-        phone: callDetail?.contact?.phone || doc.phone,
+        name: doc.contact,
+        phone: doc.phone,
         email: "—",
       },
       date: formatDate(doc.createdAt),
       time: formatTime(doc.createdAt),
-      duration: callDetail?.duration || doc.duration,
-      status: callDetail?.status || doc.status,
+      duration: doc.duration,
+      status: doc.status,
       agent: doc.agent,
-      summary: callDetail?.summary || doc.summary || "",
-      insights: callDetail?.insights || doc.insights || [],
-      followUp: callDetail?.followUp || doc.followUp || "",
-      transcript: callDetail?.transcript || doc.transcript || [],
-      pathwayId: doc.pathwayId,
-      pathwayName: doc.pathwayName,
+      summary: doc.summary || "",
+      insights: doc.insights || [],
+      followUp: doc.followUp || "",
+      transcript: doc.transcript || [],
       leadScore: doc.leadScore,
       customerIntent: doc.customerIntent,
       goalAlignment: doc.goalAlignment,
       nextActions: doc.nextActions,
+      // Edesy fields
+      provider: doc.provider || "",
+      providerStatus: doc.providerStatus || "",
+      disposition: doc.disposition || "",
+      recordingUrl: doc.recordingUrl || "",
+      syncError,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 }
 
-// POST /api/calls/start
-// Body: { phone, contactName, purpose, pathwayId }
-// The agent Cognidom uses is resolved from the selected pathway's
-// cognidomAgentId — see lib/cognidom.js for why a pathway graph itself
-// can't be sent per-call.
-export async function startCallHandler(req, res) {
-  try {
-    let pathway = null;
-    if (req.body.pathwayId) {
-      if (!mongoose.Types.ObjectId.isValid(req.body.pathwayId)) {
-        return res.status(400).json({ message: "Invalid pathwayId." });
-      }
-      pathway = await Pathway.findOne({
-        _id: req.body.pathwayId,
-        userId: req.userId,
-      });
-      if (!pathway)
-        return res.status(404).json({ message: "Pathway not found." });
-      if (!pathway.cognidomAgentId) {
-        return res.status(400).json({
-          message: `Pathway "${pathway.name}" has no Cognidom agent linked yet. Open it in the Pathways editor and set the Cognidom Agent ID before starting a call with it.`,
-        });
-      }
-    }
-
-    // Knowledge base URLs aren't part of Cognidom's documented call payload
-    // (unlike RabbitCalls), so they're no longer sent here. Attach them to
-    // the agent's knowledge base in the Cognidom dashboard instead.
-    void KnowledgeArticle;
-
-    const result = await startCall({
-      phone: req.body.phone,
-      contactName: req.body.contactName,
-      purpose: req.body.purpose,
-      agentId: pathway?.cognidomAgentId,
-      pathwayId: pathway?._id?.toString(),
-      pathwayName: pathway?.name,
-    });
-
-    const doc = await Call.create({
-      executionId: result.callId || "",
-      contact: req.body.contactName || "Unknown",
-      phone: req.body.phone,
-      purpose: req.body.purpose || "",
-      status: result.status || "In Progress",
-      duration: "0:00",
-      type: "Outbound",
-      agent: "Cognidom AI Agent",
-      pathwayId: pathway?._id,
-      pathwayName: pathway?.name || "",
-      cognidomAgentId: pathway?.cognidomAgentId || "",
-      userId: req.userId,
-    });
-
-    // Return both dbId (MongoDB _id) and callId (Cognidom call ID)
-    res.json({
-      dbId: doc._id, // use this for all subsequent backend calls
-      callId: result.callId, // Cognidom call ID
-      status: result.status,
-    });
-  } catch (err) {
-    res.status(err.status || 500).json({ message: err.message });
-  }
-}
-
 // POST /api/calls/:id/end
+//
+// Edesy's public REST API does support ending an active call via
+// POST /calls/{conversationId}/end (wrapped in lib/edesy.js as endCall()).
+// We still refuse to pretend a call ended: we ask Edesy to end it, and if
+// Edesy says it was already final (or refuses), we return the real state
+// with ended:false rather than flipping the local record.
 export async function endCallHandler(req, res) {
   try {
     const doc = await findCall(req.params.id, req.userId);
-    if (doc) {
-      doc.status = "Completed";
-      if (doc.executionId) {
-        await stopCall(doc.executionId).catch(() => null);
-        const details = await getCallDetails(doc.executionId).catch(() => null);
-        if (details) {
-          doc.duration = details.duration || doc.duration;
-          doc.summary = details.summary || "";
-          doc.transcript = details.transcript || [];
-        }
-      }
-      await doc.save();
+
+    // Non-Edesy records are not something we can end — there is no provider
+    // integration for them anymore in this app.
+    if (!doc) {
+      return res.status(404).json({ message: "Call not found" });
     }
-    res.json({ callId: req.params.id, status: "Completed" });
+    if (doc.provider !== "edesy" || !doc.executionId) {
+      return res.status(400).json({
+        message: "This call isn't an Edesy call and can't be ended from here.",
+        ended: false,
+      });
+    }
+
+    // If our local record already shows a final status, don't ask Edesy again.
+    if (isFinalStatus(doc.status)) {
+      return res.json({
+        callId: doc.executionId,
+        status: doc.status,
+        ended: false,
+        message: `This call is already ${doc.status.toLowerCase()}.`,
+      });
+    }
+
+    try {
+      await endEdesyCall(doc.executionId);
+    } catch (err) {
+      // Edesy said no (already final, not found, network, …). Reflect that
+      // honestly — do NOT mark the local record as Completed.
+      if (err instanceof EdesyError) {
+        return res.status(err.status).json({
+          callId: doc.executionId,
+          status: doc.status,
+          ended: false,
+          message: err.message,
+          code: err.code,
+        });
+      }
+      throw err;
+    }
+
+    // Edesy accepted the hangup. Sync the real state instead of guessing it.
+    const syncError = await syncEdesyCall(doc);
+
+    return res.json({
+      callId: doc.executionId,
+      status: doc.status,
+      ended: true,
+      ...(syncError ? { syncError } : {}),
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
