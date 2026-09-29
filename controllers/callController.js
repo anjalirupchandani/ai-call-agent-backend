@@ -1,22 +1,18 @@
 // controllers/callController.js — Edesy + MongoDB
 import mongoose from "mongoose";
 import Call from "../lib/models/Call.js";
-import Pathway from "../lib/models/Pathway.js";
 
 import {
   EdesyError,
   placeOutboundCall,
-  updateAgentPrompt,
   getCallStatus as getEdesyCallStatus,
   endCall as endEdesyCall,
   normalizePhoneNumber,
   isFinalStatus,
 } from "../lib/edesy.js";
 
-import {
-  buildPathwayPrompt,
-  PathwayPromptError,
-} from "../lib/pathwayPrompt.js";
+import { PathwayPromptError } from "../lib/pathwayPrompt.js";
+import { updateEdesyAgentForPathway } from "../lib/pathwayAgent.js";
 
 function formatDate(date) {
   return new Date(date).toLocaleDateString("en-US", {
@@ -126,41 +122,12 @@ export async function createEdesyCall(req, res) {
       return res.status(400).json({ success: false, message: vars.error, code: "INVALID_VARIABLES" });
     }
 
-    // ── Optional pathway: load it and turn the whole flowchart into the
-    //    agent's prompt. Nothing is sent to Edesy until the call is placed.
-    let pathway = null;
-    let compiled = null; // { prompt, greeting, warnings, stepCount }
-
-    if (pathwayId !== undefined && pathwayId !== null && pathwayId !== "") {
-      if (!mongoose.Types.ObjectId.isValid(pathwayId)) {
-        return res.status(400).json({ success: false, message: "Invalid pathwayId.", code: "INVALID_PATHWAY_ID" });
-      }
-      pathway = await Pathway.findOne({ _id: pathwayId, userId: req.userId });
-      if (!pathway) {
-        return res.status(404).json({ success: false, message: "Pathway not found.", code: "PATHWAY_NOT_FOUND" });
-      }
-      if (pathway.status !== "deployed") {
-        return res.status(400).json({
-          success: false,
-          message: `Pathway "${pathway.name}" is not deployed yet. Open it in the Pathways editor and click Deploy before starting a call.`,
-          code: "PATHWAY_NOT_DEPLOYED",
-        });
-      }
-      try {
-        compiled = buildPathwayPrompt(pathway);
-      } catch (err) {
-        if (err instanceof PathwayPromptError) {
-          return res.status(err.status || 400).json({
-            success: false,
-            message: `Pathway "${pathway.name}" is invalid: ${err.message}`,
-            code: err.code,
-          });
-        }
-        throw err;
-      }
-      if (compiled.warnings?.length) {
-        console.warn(`[pathway] warnings for "${pathway.name}":`, compiled.warnings.join(" | "));
-      }
+    // ── Optional pathway. Only the id is checked here; the pathway itself is
+    //    loaded fresh from MongoDB by updateEdesyAgentForPathway() further down,
+    //    using THIS request's pathwayId (never frontend state or a cached prompt).
+    const hasPathway = pathwayId !== undefined && pathwayId !== null && pathwayId !== "";
+    if (hasPathway && !mongoose.Types.ObjectId.isValid(pathwayId)) {
+      return res.status(400).json({ success: false, message: "Invalid pathwayId.", code: "INVALID_PATHWAY_ID" });
     }
 
     const name = typeof customerName === "string" ? customerName.trim().slice(0, 100) : "";
@@ -170,14 +137,6 @@ export async function createEdesyCall(req, res) {
     // unless the caller supplied their own customer_name.
     const callVariables = { ...vars.value };
     if (name && callVariables.customer_name === undefined) callVariables.customer_name = name;
-
-    const metadata = {};
-    if (callPurpose) metadata.purpose = callPurpose;
-    if (pathway) {
-      metadata.pathwayId = String(pathway._id);
-      metadata.pathwayName = pathway.name;
-      metadata.pathwaySteps = String(compiled.stepCount);
-    }
 
     if (startingCalls.has(lockKey)) {
       return res.status(429).json({
@@ -204,16 +163,27 @@ export async function createEdesyCall(req, res) {
         });
       }
 
-      // Put this pathway's flow on the Edesy agent, then place the call.
-      // If this fails, no call is placed (so nobody is dialled with the
-      // wrong script).
-      if (compiled) {
-        await updateAgentPrompt({
-          prompt: compiled.prompt,
-          greetingMessage: compiled.greeting,
-        });
+      // Step 1 — put this pathway's flow on the shared Edesy agent and WAIT for
+      // Edesy to confirm. If this throws, NO call is placed (nobody is dialled
+      // with the wrong script) and the error goes back to the frontend.
+      //
+      // NOTE: the Edesy agent is shared between calls. Updating it before each
+      // call can race if calls with different pathways start at the same time
+      // (see lib/pathwayAgent.js). Fine for trial use; not for concurrent production.
+      let pathway = null; // { pathwayId, pathwayName, agentId, stepCount, ... }
+      if (hasPathway) {
+        pathway = await updateEdesyAgentForPathway(pathwayId, req.userId);
       }
 
+      const metadata = {};
+      if (callPurpose) metadata.purpose = callPurpose;
+      if (pathway) {
+        metadata.pathwayId = pathway.pathwayId;
+        metadata.pathwayName = pathway.pathwayName;
+        metadata.pathwaySteps = String(pathway.stepCount);
+      }
+
+      // Step 2 — only now start the outbound call on the same agent.
       const result = await placeOutboundCall(phone.value, callVariables, { metadata });
 
       let doc;
@@ -231,8 +201,8 @@ export async function createEdesyCall(req, res) {
           duration: "0:00",
           type: "Outbound",
           agent: "Edesy AI Agent",
-          pathwayId: pathway?._id || null,
-          pathwayName: pathway?.name || "",
+          pathwayId: pathway?.pathwayId || null,
+          pathwayName: pathway?.pathwayName || "",
           userId: req.userId,
         });
       } catch (dbErr) {
@@ -254,8 +224,8 @@ export async function createEdesyCall(req, res) {
         // Same fields the existing frontend flow already uses:
         callId: result.conversationId,
         dbId: doc._id,
-        pathwayId: pathway?._id || null,
-        pathwayName: pathway?.name || "",
+        pathwayId: pathway?.pathwayId || null,
+        pathwayName: pathway?.pathwayName || "",
       });
     } finally {
       startingCalls.delete(lockKey);
