@@ -1,15 +1,22 @@
 // controllers/callController.js — Edesy + MongoDB
 import mongoose from "mongoose";
 import Call from "../lib/models/Call.js";
+import Pathway from "../lib/models/Pathway.js";
 
 import {
   EdesyError,
   placeOutboundCall,
+  updateAgentPrompt,
   getCallStatus as getEdesyCallStatus,
   endCall as endEdesyCall,
   normalizePhoneNumber,
   isFinalStatus,
 } from "../lib/edesy.js";
+
+import {
+  buildPathwayPrompt,
+  PathwayPromptError,
+} from "../lib/pathwayPrompt.js";
 
 function formatDate(date) {
   return new Date(date).toLocaleDateString("en-US", {
@@ -101,13 +108,13 @@ function validateVariables(input) {
 }
 
 // POST /api/calls
-// Body: { phoneNumber, customerName?, purpose?, variables? }
+// Body: { phoneNumber, customerName?, purpose?, variables?, pathwayId? }
 // Places ONE real outbound call through Edesy. No retries, no background work.
 export async function createEdesyCall(req, res) {
   const lockKey = String(req.userId);
 
   try {
-    const { phoneNumber, customerName, purpose, variables } = req.body || {};
+    const { phoneNumber, customerName, purpose, variables, pathwayId } = req.body || {};
 
     const phone = normalizePhoneNumber(phoneNumber);
     if (!phone.ok) {
@@ -119,6 +126,43 @@ export async function createEdesyCall(req, res) {
       return res.status(400).json({ success: false, message: vars.error, code: "INVALID_VARIABLES" });
     }
 
+    // ── Optional pathway: load it and turn the whole flowchart into the
+    //    agent's prompt. Nothing is sent to Edesy until the call is placed.
+    let pathway = null;
+    let compiled = null; // { prompt, greeting, warnings, stepCount }
+
+    if (pathwayId !== undefined && pathwayId !== null && pathwayId !== "") {
+      if (!mongoose.Types.ObjectId.isValid(pathwayId)) {
+        return res.status(400).json({ success: false, message: "Invalid pathwayId.", code: "INVALID_PATHWAY_ID" });
+      }
+      pathway = await Pathway.findOne({ _id: pathwayId, userId: req.userId });
+      if (!pathway) {
+        return res.status(404).json({ success: false, message: "Pathway not found.", code: "PATHWAY_NOT_FOUND" });
+      }
+      if (pathway.status !== "deployed") {
+        return res.status(400).json({
+          success: false,
+          message: `Pathway "${pathway.name}" is not deployed yet. Open it in the Pathways editor and click Deploy before starting a call.`,
+          code: "PATHWAY_NOT_DEPLOYED",
+        });
+      }
+      try {
+        compiled = buildPathwayPrompt(pathway);
+      } catch (err) {
+        if (err instanceof PathwayPromptError) {
+          return res.status(err.status || 400).json({
+            success: false,
+            message: `Pathway "${pathway.name}" is invalid: ${err.message}`,
+            code: err.code,
+          });
+        }
+        throw err;
+      }
+      if (compiled.warnings?.length) {
+        console.warn(`[pathway] warnings for "${pathway.name}":`, compiled.warnings.join(" | "));
+      }
+    }
+
     const name = typeof customerName === "string" ? customerName.trim().slice(0, 100) : "";
     const callPurpose = typeof purpose === "string" ? purpose.trim().slice(0, 200) : "";
 
@@ -127,7 +171,13 @@ export async function createEdesyCall(req, res) {
     const callVariables = { ...vars.value };
     if (name && callVariables.customer_name === undefined) callVariables.customer_name = name;
 
-    const metadata = callPurpose ? { purpose: callPurpose } : undefined;
+    const metadata = {};
+    if (callPurpose) metadata.purpose = callPurpose;
+    if (pathway) {
+      metadata.pathwayId = String(pathway._id);
+      metadata.pathwayName = pathway.name;
+      metadata.pathwaySteps = String(compiled.stepCount);
+    }
 
     if (startingCalls.has(lockKey)) {
       return res.status(429).json({
@@ -154,6 +204,16 @@ export async function createEdesyCall(req, res) {
         });
       }
 
+      // Put this pathway's flow on the Edesy agent, then place the call.
+      // If this fails, no call is placed (so nobody is dialled with the
+      // wrong script).
+      if (compiled) {
+        await updateAgentPrompt({
+          prompt: compiled.prompt,
+          greetingMessage: compiled.greeting,
+        });
+      }
+
       const result = await placeOutboundCall(phone.value, callVariables, { metadata });
 
       let doc;
@@ -171,6 +231,8 @@ export async function createEdesyCall(req, res) {
           duration: "0:00",
           type: "Outbound",
           agent: "Edesy AI Agent",
+          pathwayId: pathway?._id || null,
+          pathwayName: pathway?.name || "",
           userId: req.userId,
         });
       } catch (dbErr) {
@@ -192,6 +254,8 @@ export async function createEdesyCall(req, res) {
         // Same fields the existing frontend flow already uses:
         callId: result.conversationId,
         dbId: doc._id,
+        pathwayId: pathway?._id || null,
+        pathwayName: pathway?.name || "",
       });
     } finally {
       startingCalls.delete(lockKey);
@@ -199,6 +263,9 @@ export async function createEdesyCall(req, res) {
   } catch (err) {
     if (err instanceof EdesyError) {
       return res.status(err.status).json({ success: false, message: err.message, code: err.code });
+    }
+    if (err instanceof PathwayPromptError) {
+      return res.status(err.status || 400).json({ success: false, message: err.message, code: err.code });
     }
     console.error("[edesy] createEdesyCall unexpected error:", err);
     return res.status(500).json({

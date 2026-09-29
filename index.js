@@ -18,11 +18,8 @@ import { dirname, join } from "path";
 // Middleware
 import { requireAuth } from "./middleware/auth.js";
 
-// Controllers (health check + Cognidom webhook)
-import {
-  healthCheck,
-  handleCognidomWebhook,
-} from "./controllers/webhookController.js";
+// Controllers (health check only)
+import { healthCheck } from "./controllers/webhookController.js";
 
 // Routes
 import authRouter from "./routes/auth.js";
@@ -87,10 +84,6 @@ app.get("/api/health", healthCheck);
 
 app.use("/api/auth", authRouter);
 
-// ---- Cognidom webhook (public — Cognidom posts here directly, no JWT) -----
-
-app.post("/api/webhooks/cognidom", handleCognidomWebhook);
-
 // ---- Protected resource routes --------------------------------------------
 
 app.use("/api/dashboard", requireAuth, dashboardRouter);
@@ -104,7 +97,7 @@ app.use("/api/notifications", requireAuth, notificationsRouter);
 app.use("/api/campaigns", requireAuth, campaignsRouter);
 app.use("/api/pathways", requireAuth, pathwaysRouter);
 
-// Legacy alias
+// Legacy alias (kept for backwards compatibility — same router)
 app.use("/api/call", requireAuth, callsRouter);
 
 // ---- Error handler --------------------------------------------------------
@@ -121,9 +114,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(
-    `ℹ️  Mode: local (all data stored in-memory, no external services)`
-  );
+  console.log(`ℹ️  Provider: Edesy (voice-agent.edesy.in)`);
 });
 
 process.on("uncaughtException", (e) =>
