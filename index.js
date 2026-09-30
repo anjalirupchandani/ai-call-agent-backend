@@ -33,6 +33,7 @@ import scheduledCallsRouter from "./routes/scheduledCalls.js";
 import notificationsRouter from "./routes/notifications.js";
 import campaignsRouter from "./routes/campaigns.js";
 import pathwaysRouter from "./routes/pathways.js";
+import agentToolsRouter from "./routes/agentTools.js";
 
 // ---- App setup ------------------------------------------------------------
 
@@ -69,6 +70,10 @@ app.use((req, _res, next) => {
   console.log(`📡 ${req.method} ${req.url}`);
   next();
 });
+
+// Called by the Edesy voice agent mid-call. Must be mounted BEFORE express.json()
+// (it parses its own body) and is protected by X-Tool-Secret, not a user JWT.
+app.use("/api/agent-tools", agentToolsRouter);
 
 app.use(express.json());
 

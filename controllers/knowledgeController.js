@@ -1,6 +1,12 @@
 // controllers/knowledgeController.js — MongoDB-backed via KnowledgeArticle model
 import multer from "multer";
 import KnowledgeArticle from "../lib/models/KnowledgeArticle.js";
+import {
+  MAX_CONTENT_CHARS,
+  extractPdfText,
+  extractWebsiteText,
+  assertPublicUrl,
+} from "../lib/knowledgeText.js";
 
 export const upload = multer({
   storage: multer.memoryStorage(),
@@ -17,10 +23,37 @@ export const upload = multer({
   },
 });
 
-function extractText(buffer, mimetype) {
-  if (mimetype === "text/plain" || mimetype === "text/csv")
-    return buffer.toString("utf8").slice(0, 10_000);
-  return `[Binary file — ${mimetype}]`;
+// Returns { content, warning? }. `content` is what the voice agent can search.
+// Extraction problems never block the upload; they come back as `warning` so the
+// document is still stored/downloadable (and `npm run kb:reindex` can retry).
+async function extractFileContent(file) {
+  const { buffer, mimetype } = file;
+  if (mimetype === "text/plain" || mimetype === "text/csv") {
+    return { content: buffer.toString("utf8").slice(0, MAX_CONTENT_CHARS) };
+  }
+  if (mimetype === "application/pdf") {
+    try {
+      const content = await extractPdfText(buffer);
+      if (content.length < 50) {
+        return {
+          content: `[Binary file — ${mimetype}]`,
+          warning: "No readable text found in this PDF (it may be a scan). The voice agent can't answer from it.",
+        };
+      }
+      return { content };
+    } catch (err) {
+      console.error("[knowledge] PDF text extraction failed:", err.message);
+      return {
+        content: `[Binary file — ${mimetype}]`,
+        warning: `Saved, but the text couldn't be read: ${err.message}`,
+      };
+    }
+  }
+  // .doc / .docx: stored for download only; text extraction isn't implemented.
+  return {
+    content: `[Binary file — ${mimetype}]`,
+    warning: "Saved, but the voice agent can only answer from PDF, TXT, CSV and website sources.",
+  };
 }
 
 function omitFileData(doc) {
@@ -75,9 +108,10 @@ export async function createArticle(req, res) {
     if (!title?.trim()) return res.status(400).json({ message: "Title is required" });
     if (!req.file)      return res.status(400).json({ message: "File is required" });
 
+    const { content, warning } = await extractFileContent(req.file);
     const article = await KnowledgeArticle.create({
       title:    title.trim(),
-      content:  extractText(req.file.buffer, req.file.mimetype),
+      content,
       category: category || "faq",
       fileName: req.file.originalname,
       fileSize: req.file.size,
@@ -85,7 +119,7 @@ export async function createArticle(req, res) {
       fileData: req.file.buffer.toString("base64"),
       userId:   req.userId,
     });
-    res.status(201).json(omitFileData(article));
+    res.status(201).json({ ...omitFileData(article), ...(warning ? { warning } : {}) });
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
   }
@@ -107,15 +141,34 @@ export async function createWebsiteArticle(req, res) {
       return res.status(400).json({ message: "Website URL must use HTTP or HTTPS" });
     }
 
+    // Refuse localhost / private-network addresses up front (SSRF protection).
+    try {
+      await assertPublicUrl(website.href);
+    } catch (err) {
+      return res.status(400).json({ message: err.message });
+    }
+
+    // Fetch the page text so the voice agent has something to answer from.
+    let content = `Website knowledge source: ${website.href}`;
+    let warning;
+    try {
+      const text = await extractWebsiteText(website.href);
+      if (text.length >= 200) content = text;
+      else warning = "Very little text was found on that page (it may load its content with JavaScript). The voice agent may not be able to answer from it.";
+    } catch (err) {
+      console.error(`[knowledge] fetching ${website.href} failed:`, err.message);
+      warning = `Saved, but the page couldn't be read: ${err.message}`;
+    }
+
     const article = await KnowledgeArticle.create({
       title: title?.trim() || website.hostname,
-      content: `Website knowledge source: ${website.href}`,
+      content,
       category: category || "faq",
       sourceType: "website",
       sourceUrl: website.href,
       userId: req.userId,
     });
-    res.status(201).json(omitFileData(article));
+    res.status(201).json({ ...omitFileData(article), ...(warning ? { warning } : {}) });
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
   }
@@ -130,15 +183,18 @@ export async function updateArticle(req, res) {
     const { title, category } = req.body;
     if (title?.trim()) article.title    = title.trim();
     if (category)      article.category = category;
+    let warning;
     if (req.file) {
-      article.content  = extractText(req.file.buffer, req.file.mimetype);
+      const extracted = await extractFileContent(req.file);
+      warning = extracted.warning;
+      article.content  = extracted.content;
       article.fileData = req.file.buffer.toString("base64");
       article.fileName = req.file.originalname;
       article.fileSize = req.file.size;
       article.fileType = req.file.mimetype;
     }
     await article.save();
-    res.json(omitFileData(article));
+    res.json({ ...omitFileData(article), ...(warning ? { warning } : {}) });
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
   }

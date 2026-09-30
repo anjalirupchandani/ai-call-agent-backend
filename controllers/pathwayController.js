@@ -9,7 +9,7 @@ import {
   createPathway as createPathwayRecord,
   updatePathway as updatePathwayRecord,
   deletePathway as deletePathwayRecord,
-} from "../lib/pathways.js";
+} from "../lib/Pathways.js";
 
 // Fields a client is allowed to set on a Pathway. Anything outside this list
 // (userId, _id, timestamps, and any leftover Cognidom field) is ignored.

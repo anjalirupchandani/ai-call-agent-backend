@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "kb:register": "node scripts/registerKnowledgeTool.js",
+    "kb:reindex": "node scripts/reindexKnowledge.js",
+    "test": "node --test tests/*.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -14,6 +17,7 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.24.4",
-    "multer": "^2.3.0"
+    "multer": "^2.3.0",
+    "pdf-parse": "1.1.1"
   }
 }
