@@ -1,6 +1,6 @@
 // controllers/campaignController.js — MongoDB-backed via Campaign model
 import Campaign from "../lib/models/Campaign.js";
-import { startCall } from "../lib/rabbitcalls.js";
+// import { startCall } from "../lib/rabbitcalls.js";
 
 function toSummary(doc) {
   return {
