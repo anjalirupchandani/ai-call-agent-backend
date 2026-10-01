@@ -4,7 +4,6 @@ import Call from "../lib/models/Call.js";
 
 import {
   EdesyError,
-  placeOutboundCall,
   getCallStatus as getEdesyCallStatus,
   endCall as endEdesyCall,
   normalizePhoneNumber,
@@ -12,7 +11,7 @@ import {
 } from "../lib/edesy.js";
 
 import { PathwayPromptError } from "../lib/pathwayPrompt.js";
-import { updateEdesyAgentForPathway } from "../lib/pathwayAgent.js";
+import { startCall, CallStartError } from "../lib/callStarter.js";
 
 function formatDate(date) {
   return new Date(date).toLocaleDateString("en-US", {
@@ -66,16 +65,9 @@ export async function listCalls(req, res) {
 
 // ── Edesy ─────────────────────────────────────────────────────────────────────
 
-// A second call to the same number inside this window is treated as an
-// accidental double-click and rejected — every call costs Edesy credits.
-const DUPLICATE_WINDOW_MS = 60_000;
 // Stop asking Edesy about a finished call once it is this old (summary/transcript
 // that still haven't appeared by then are not going to).
 const SYNC_MAX_AGE_MS = 60 * 60_000;
-
-// One in-flight "start call" per user, so two requests racing each other can't
-// both pass the duplicate check below before either has been saved.
-const startingCalls = new Set();
 
 function validateVariables(input) {
   if (input === undefined || input === null) return { ok: true, value: {} };
@@ -107,8 +99,6 @@ function validateVariables(input) {
 // Body: { phoneNumber, customerName?, purpose?, variables?, pathwayId? }
 // Places ONE real outbound call through Edesy. No retries, no background work.
 export async function createEdesyCall(req, res) {
-  const lockKey = String(req.userId);
-
   try {
     const { phoneNumber, customerName, purpose, variables, pathwayId } = req.body || {};
 
@@ -138,99 +128,36 @@ export async function createEdesyCall(req, res) {
     const callVariables = { ...vars.value };
     if (name && callVariables.customer_name === undefined) callVariables.customer_name = name;
 
-    if (startingCalls.has(lockKey)) {
-      return res.status(429).json({
-        success: false,
-        message: "A call request is already in progress. Please wait for it to finish.",
-        code: "CALL_IN_PROGRESS",
-      });
-    }
-    startingCalls.add(lockKey);
+    // Lock, duplicate check, pathway → agent update, placing the call and saving
+    // the Call record all live in lib/callStarter.js (shared with the scheduler).
+    const { result, doc, pathway } = await startCall({
+      userId: req.userId,
+      phoneNumber: phone.value,
+      customerName: name,
+      purpose: callPurpose,
+      variables: callVariables,
+      pathwayId: hasPathway ? pathwayId : null,
+    });
 
-    try {
-      const recent = await Call.findOne({
-        userId: req.userId,
-        provider: "edesy",
-        phone: phone.value,
-        createdAt: { $gte: new Date(Date.now() - DUPLICATE_WINDOW_MS) },
-      }).select("_id executionId");
-
-      if (recent) {
-        return res.status(429).json({
-          success: false,
-          message: "You already started a call to this number less than a minute ago. Check Call History before calling again.",
-          code: "DUPLICATE_CALL",
-        });
-      }
-
-      // Step 1 — put this pathway's flow on the shared Edesy agent and WAIT for
-      // Edesy to confirm. If this throws, NO call is placed (nobody is dialled
-      // with the wrong script) and the error goes back to the frontend.
-      //
-      // NOTE: the Edesy agent is shared between calls. Updating it before each
-      // call can race if calls with different pathways start at the same time
-      // (see lib/pathwayAgent.js). Fine for trial use; not for concurrent production.
-      let pathway = null; // { pathwayId, pathwayName, agentId, stepCount, ... }
-      if (hasPathway) {
-        pathway = await updateEdesyAgentForPathway(pathwayId, req.userId);
-      }
-
-      const metadata = {};
-      if (callPurpose) metadata.purpose = callPurpose;
-      if (pathway) {
-        metadata.pathwayId = pathway.pathwayId;
-        metadata.pathwayName = pathway.pathwayName;
-        metadata.pathwaySteps = String(pathway.stepCount);
-      }
-
-      // Step 2 — only now start the outbound call on the same agent.
-      const result = await placeOutboundCall(phone.value, callVariables, { metadata });
-
-      let doc;
-      try {
-        doc = await Call.create({
-          executionId: result.conversationId,
-          provider: "edesy",
-          providerStatus: result.status,
-          providerAgentId: String(result.agentId),
-          callSid: result.callSid,
-          contact: name || "Unknown",
-          phone: phone.value,
-          purpose: callPurpose,
-          status: "In Progress",
-          duration: "0:00",
-          type: "Outbound",
-          agent: "Edesy AI Agent",
-          pathwayId: pathway?.pathwayId || null,
-          pathwayName: pathway?.pathwayName || "",
-          userId: req.userId,
-        });
-      } catch (dbErr) {
-        // The call IS in progress on Edesy; only our record failed. Say so
-        // clearly so the user doesn't click again and pay for a second call.
-        console.error("[edesy] Call placed but saving to MongoDB failed:", dbErr.message);
-        return res.status(500).json({
-          success: false,
-          message: `The call was placed (ID ${result.conversationId}) but couldn't be saved to your history. Do not retry — check the Edesy dashboard.`,
-          code: "SAVE_FAILED",
-          conversationId: result.conversationId,
-        });
-      }
-
-      return res.status(201).json({
-        success: true,
-        conversationId: result.conversationId,
-        status: result.status,
-        // Same fields the existing frontend flow already uses:
-        callId: result.conversationId,
-        dbId: doc._id,
-        pathwayId: pathway?.pathwayId || null,
-        pathwayName: pathway?.pathwayName || "",
-      });
-    } finally {
-      startingCalls.delete(lockKey);
-    }
+    return res.status(201).json({
+      success: true,
+      conversationId: result.conversationId,
+      status: result.status,
+      // Same fields the existing frontend flow already uses:
+      callId: result.conversationId,
+      dbId: doc._id,
+      pathwayId: pathway?.pathwayId || null,
+      pathwayName: pathway?.pathwayName || "",
+    });
   } catch (err) {
+    if (err instanceof CallStartError) {
+      return res.status(err.status).json({
+        success: false,
+        message: err.message,
+        code: err.code,
+        ...(err.conversationId ? { conversationId: err.conversationId } : {}),
+      });
+    }
     if (err instanceof EdesyError) {
       return res.status(err.status).json({ success: false, message: err.message, code: err.code });
     }

@@ -35,6 +35,9 @@ import campaignsRouter from "./routes/campaigns.js";
 import pathwaysRouter from "./routes/pathways.js";
 import agentToolsRouter from "./routes/agentTools.js";
 
+// Appointment scheduler (places the call when the appointment time arrives)
+import { startScheduler } from "./lib/scheduler.js";
+
 // ---- App setup ------------------------------------------------------------
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -120,6 +123,7 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`ℹ️  Provider: Edesy (voice-agent.edesy.in)`);
+  startScheduler();
 });
 
 process.on("uncaughtException", (e) =>
