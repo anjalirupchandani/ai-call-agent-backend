@@ -57,6 +57,11 @@ export async function listCalls(req, res) {
     const calls = await Call.find({ userId: req.userId }).sort({
       createdAt: -1,
     });
+    await Promise.all(
+      calls
+        .filter((call) => call.provider === "edesy" && !isFinalStatus(call.status))
+        .map((call) => syncEdesyCall(call))
+    );
     res.json(calls.map(docToRow));
   } catch (err) {
     res.status(500).json({ message: err.message });
