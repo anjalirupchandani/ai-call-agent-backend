@@ -13,7 +13,7 @@ async function resolvePathway(pathwayId, userId) {
   if (!mongoose.Types.ObjectId.isValid(pathwayId)) {
     return { ok: false, message: "Invalid pathway." };
   }
-  const pathway = await Pathway.findOne({ _id: pathwayId, userId }).select("name status");
+  const pathway = await Pathway.findOne({ _id: pathwayId }).select("name status");
   if (!pathway) return { ok: false, message: "Pathway not found." };
   if (pathway.status !== "deployed") {
     return {

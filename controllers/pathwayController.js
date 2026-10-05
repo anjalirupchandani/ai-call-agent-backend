@@ -35,7 +35,7 @@ function pickWritableFields(body = {}) {
 // GET /api/pathways
 export async function listPathways(req, res) {
   try {
-    res.json((await getPathways(req.userId)) || []);
+    res.json((await getPathways()) || []);
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
   }
@@ -44,7 +44,7 @@ export async function listPathways(req, res) {
 // GET /api/pathways/:id
 export async function getPathway(req, res) {
   try {
-    const p = await getPathwayById(req.params.id, req.userId);
+    const p = await getPathwayById(req.params.id);
     if (!p) return res.status(404).json({ message: "Pathway not found" });
     res.json(p);
   } catch (err) {
@@ -78,11 +78,7 @@ export async function updatePathway(req, res) {
     const fields = pickWritableFields(req.body);
 
     // Passing an empty object is legal — it just won't change anything.
-    const updated = await updatePathwayRecord(
-      req.params.id,
-      req.userId,
-      fields
-    );
+    const updated = await updatePathwayRecord(req.params.id, fields);
     if (!updated) return res.status(404).json({ message: "Pathway not found" });
     res.json(updated);
   } catch (err) {
@@ -93,7 +89,7 @@ export async function updatePathway(req, res) {
 // DELETE /api/pathways/:id
 export async function deletePathway(req, res) {
   try {
-    const deleted = await deletePathwayRecord(req.params.id, req.userId);
+    const deleted = await deletePathwayRecord(req.params.id);
     if (!deleted) return res.status(404).json({ message: "Pathway not found" });
     res.json({ message: "Pathway deleted successfully" });
   } catch (err) {
