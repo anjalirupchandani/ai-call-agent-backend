@@ -15,6 +15,7 @@ process.env.EDESY_AGENT_ID = "42";
 const Pathway = (await import("../lib/models/Pathway.js")).default;
 const Call = (await import("../lib/models/Call.js")).default;
 const { createEdesyCall } = await import("../controllers/callController.js");
+const { LANGUAGE_QUESTION } = await import("../lib/pathwayPrompt.js");
 
 const userId = new mongoose.Types.ObjectId();
 const idA = new mongoose.Types.ObjectId();
@@ -101,7 +102,7 @@ test("Test 1 — Pathway A: agent is updated with A's prompt BEFORE the call sta
   const patch = requests[0].body;
   assert.match(patch.prompt, /Ask customer if interested/);
   assert.match(patch.prompt, /Explain product/);
-  assert.equal(patch.greetingMessage, "Hello, this is the A team.");
+  assert.equal(patch.greetingMessage, LANGUAGE_QUESTION);
   assert.equal(requests[1].body.agentId, 42); // same single agent
 });
 
@@ -115,7 +116,7 @@ test("Test 2 — Pathway A then B: agent instructions are replaced automatically
   assert.match(patchB.prompt, /Offer delivery assistance/);
   assert.doesNotMatch(patchB.prompt, /Ask customer if interested/);
   assert.doesNotMatch(patchB.prompt, /Explain product/);
-  assert.equal(patchB.greetingMessage, "Hi, calling about your order.");
+  assert.equal(patchB.greetingMessage, LANGUAGE_QUESTION);
   assert.equal(requests.filter((r) => r.method === "PATCH").length, 2);
 });
 
