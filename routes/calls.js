@@ -4,6 +4,7 @@ import {
   listCalls,
   getCall,
   createEdesyCall,
+  createBulkCalls,
   endCallHandler,
   deleteCallHandler,
 } from "../controllers/callController.js";
@@ -11,6 +12,7 @@ import {
 const router = Router();
 
 router.get("/", listCalls);
+router.post("/bulk", createBulkCalls); // multiple calls in one request (must stay above "/:id")
 router.post("/", createEdesyCall);
 router.get("/:id", getCall);
 router.post("/:id/end", endCallHandler);

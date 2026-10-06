@@ -11,7 +11,8 @@ import {
 } from "../lib/edesy.js";
 
 import { PathwayPromptError } from "../lib/pathwayPrompt.js";
-import { startCall, CallStartError } from "../lib/callStarter.js";
+import { startCall, startMultipleCalls, CallStartError } from "../lib/callStarter.js";
+import { isSmsConfigured, sendInstallLinkSms } from "../lib/sms.js";
 
 function formatDate(date) {
   return new Date(date).toLocaleDateString("en-US", {
@@ -178,10 +179,121 @@ export async function createEdesyCall(req, res) {
   }
 }
 
+// POST /api/calls/bulk
+// Body: { calls: [{ phoneNumber, customerName, purpose?, variables?, pathwayId? }], concurrency? }
+// Places up to 50 real outbound calls in one request. Each number succeeds or
+// fails on its own; the response (HTTP 207) lists the outcome for every row.
+export async function createBulkCalls(req, res) {
+  try {
+    const { calls: rawCalls, concurrency } = req.body || {};
+
+    if (!Array.isArray(rawCalls) || rawCalls.length === 0) {
+      return res.status(400).json({ success: false, message: "calls array is required.", code: "NO_CALLS" });
+    }
+    if (rawCalls.length > 50) {
+      return res.status(400).json({ success: false, message: "Maximum 50 calls per bulk request.", code: "TOO_MANY_CALLS" });
+    }
+
+    // Validate EVERY row first — if any row is bad, nothing is dialled.
+    const callRequests = [];
+    for (let i = 0; i < rawCalls.length; i++) {
+      const row = rawCalls[i] || {};
+
+      const phone = normalizePhoneNumber(row.phoneNumber);
+      if (!phone.ok) {
+        return res.status(400).json({
+          success: false,
+          message: `Row ${i + 1} (${row.phoneNumber || "empty"}): ${phone.error}`,
+          code: "INVALID_PHONE",
+        });
+      }
+
+      const vars = validateVariables(row.variables);
+      if (!vars.ok) {
+        return res.status(400).json({ success: false, message: `Row ${i + 1}: ${vars.error}`, code: "INVALID_VARIABLES" });
+      }
+
+      const hasPathway = row.pathwayId !== undefined && row.pathwayId !== null && row.pathwayId !== "";
+      if (hasPathway && !mongoose.Types.ObjectId.isValid(row.pathwayId)) {
+        return res.status(400).json({ success: false, message: `Row ${i + 1}: invalid pathwayId.`, code: "INVALID_PATHWAY_ID" });
+      }
+
+      const name = typeof row.customerName === "string" ? row.customerName.trim().slice(0, 100) : "";
+      const callPurpose = typeof row.purpose === "string" ? row.purpose.trim().slice(0, 200) : "";
+      const callVariables = { ...vars.value };
+      if (name && callVariables.customer_name === undefined) callVariables.customer_name = name;
+
+      callRequests.push({
+        phoneNumber: phone.value,
+        customerName: name,
+        purpose: callPurpose,
+        variables: callVariables,
+        pathwayId: hasPathway ? String(row.pathwayId) : null,
+      });
+    }
+
+    const results = await startMultipleCalls(callRequests, req.userId, {
+      concurrency: Number(concurrency) || 5,
+    });
+
+    const succeeded = results.filter((r) => r.success).length;
+
+    return res.status(207).json({
+      success: true,
+      summary: { total: results.length, succeeded, failed: results.length - succeeded },
+      results: results.map((r) => ({
+        phoneNumber: r.phoneNumber,
+        success: r.success,
+        conversationId: r.result?.conversationId || null,
+        dbId: r.doc?._id || null,
+        error: r.error || null,
+        code: r.code || null,
+      })),
+    });
+  } catch (err) {
+    if (err instanceof CallStartError) {
+      return res.status(err.status).json({ success: false, message: err.message, code: err.code });
+    }
+    console.error("[bulk call] unexpected error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong while starting the calls. Check Call History before trying again.",
+      code: "INTERNAL",
+    });
+  }
+}
+
 // Refreshes an Edesy call record from Edesy. Only talks to Edesy while it can
 // still learn something: the call is unfinished, or it finished recently and its
 // summary/transcript haven't arrived yet. Never throws — on any Edesy error the
 // last known state is kept, and a warning message is returned for the UI.
+// Sends the "install our app" SMS once, after a call that actually connected has
+// ended. Never throws and never blocks the response.
+async function maybeSendInstallSms(doc) {
+  try {
+    if (doc.provider !== "edesy" || doc.status !== "Completed" || doc.installSmsSentAt) return;
+    const connected = (doc.transcript && doc.transcript.length > 0) || (doc.duration && doc.duration !== "0:00");
+    if (!connected || !isSmsConfigured()) return;
+
+    // Claim it atomically so overlapping status polls can't send it twice.
+    const claimed = await Call.findOneAndUpdate(
+      { _id: doc._id, installSmsSentAt: null },
+      { $set: { installSmsSentAt: new Date() } }
+    );
+    if (!claimed) return;
+
+    try {
+      await sendInstallLinkSms(doc.phone, doc.contact);
+      console.log(`[sms] Install link sent to ${doc.phone} (call ${doc.executionId})`);
+    } catch (err) {
+      console.warn(`[sms] Couldn't send install link for call ${doc.executionId}: ${err.message}`);
+      await Call.updateOne({ _id: doc._id }, { $set: { installSmsSentAt: null } }); // allow a retry
+    }
+  } catch (err) {
+    console.warn(`[sms] install-link check failed: ${err.message}`);
+  }
+}
+
 async function syncEdesyCall(doc) {
   const finished = isFinalStatus(doc.status);
   const hasPostCallData = Boolean(doc.summary) || (doc.transcript && doc.transcript.length > 0);
@@ -202,6 +314,7 @@ async function syncEdesyCall(doc) {
     if (d.transcript.length > 0) doc.transcript = d.transcript;
 
     if (doc.isModified()) await doc.save();
+    void maybeSendInstallSms(doc); // fire-and-forget
     return null;
   } catch (err) {
     console.warn(`[edesy] status sync failed for ${doc.executionId}: ${err.message}`);
