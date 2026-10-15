@@ -1,6 +1,7 @@
 // controllers/campaignController.js — MongoDB-backed via Campaign model
 import Campaign from "../lib/models/Campaign.js";
-// import { startCall } from "../lib/rabbitcalls.js";
+// TODO: startCall() below is NOT imported, so every campaign call currently fails.
+// It must be wired to lib/callStarter.js (startCall / startMultipleCalls).
 
 function toSummary(doc) {
   return {

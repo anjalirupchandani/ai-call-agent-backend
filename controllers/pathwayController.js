@@ -12,7 +12,7 @@ import {
 } from "../lib/Pathways.js";
 
 // Fields a client is allowed to set on a Pathway. Anything outside this list
-// (userId, _id, timestamps, and any leftover Cognidom field) is ignored.
+// (userId, _id, timestamps and any unknown field) is ignored.
 function pickWritableFields(body = {}) {
   const out = {};
 

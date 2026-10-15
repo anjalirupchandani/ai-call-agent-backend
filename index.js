@@ -12,8 +12,6 @@ dns.setServers([
 import express from "express";
 import cors from "cors";
 import { connectDB } from "./lib/db.js";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
 
 // Middleware
 import { requireAuth } from "./middleware/auth.js";
@@ -39,8 +37,6 @@ import agentToolsRouter from "./routes/agentTools.js";
 import { startScheduler } from "./lib/scheduler.js";
 
 // ---- App setup ------------------------------------------------------------
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -81,10 +77,6 @@ app.use("/api/agent-tools", agentToolsRouter);
 
 app.use(express.json());
 
-// ---- Serve API Explorer UI ------------------------------------------------
-
-app.use(express.static(join(__dirname, "public")));
-
 // ---- Health & misc top-level endpoints ------------------------------------
 
 app.get("/api/health", healthCheck);
@@ -105,9 +97,6 @@ app.use("/api/scheduled-calls", requireAuth, scheduledCallsRouter);
 app.use("/api/notifications", requireAuth, notificationsRouter);
 app.use("/api/campaigns", requireAuth, campaignsRouter);
 app.use("/api/pathways", requireAuth, pathwaysRouter);
-
-// Legacy alias (kept for backwards compatibility — same router)
-app.use("/api/call", requireAuth, callsRouter);
 
 // ---- Error handler --------------------------------------------------------
 
