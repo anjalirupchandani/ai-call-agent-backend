@@ -5,11 +5,29 @@ import User from "../lib/models/User.js";
 // PUT /api/users/profile
 export async function updateProfile(req, res) {
   try {
-    const { name, email, avatar } = req.body;
+    const { name, email, avatar, phone, bio, timezone, language, settings } = req.body;
     const updates = {};
-    if (name?.trim())         updates.name   = name.trim();
-    if (email?.trim())        updates.email  = email.trim().toLowerCase();
+    if (name?.trim()) updates.name = name.trim();
+    if (email?.trim()) updates.email = email.trim().toLowerCase();
     if (avatar !== undefined) updates.avatar = avatar;
+    if (typeof phone === "string") updates.phone = phone.trim();
+    if (typeof bio === "string") updates.bio = bio.trim();
+    if (typeof timezone === "string") updates.timezone = timezone;
+    if (typeof language === "string") updates.language = language;
+    if (settings && typeof settings === "object" && !Array.isArray(settings)) {
+      updates.settings = {};
+      if (typeof settings.defaultAgent === "string") updates.settings.defaultAgent = settings.defaultAgent;
+      for (const key of ["agentSettings", "voiceSettings", "callSettings", "notificationSettings"]) {
+        if (settings[key] && typeof settings[key] === "object" && !Array.isArray(settings[key])) {
+          updates.settings[key] = {};
+          for (const [name, value] of Object.entries(settings[key])) {
+            if (typeof value === "boolean" || typeof value === "string" || typeof value === "number") {
+              updates.settings[key][name] = value;
+            }
+          }
+        }
+      }
+    }
 
     if (updates.email) {
       const existing = await User.findOne({ email: updates.email, _id: { $ne: req.userId } });
