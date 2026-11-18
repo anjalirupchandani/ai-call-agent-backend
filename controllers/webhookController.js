@@ -9,6 +9,6 @@ export function healthCheck(_req, res) {
     environment: process.env.NODE_ENV || "development",
     database: isDBConnected() ? "connected" : "DISCONNECTED",
     jwtSecretConfigured: !!process.env.JWT_SECRET,
-    mode: "local (Edesy for calling)",
+    mode: "local real-time voice agent (browser STT/TTS + Q&A knowledge base)",
   });
 }

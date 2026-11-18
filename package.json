@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "node --watch index.js",
     "start": "node index.js",
-    "kb:register": "node scripts/registerKnowledgeTool.js",
     "kb:reindex": "node scripts/reindexKnowledge.js",
     "test": "node --test tests/*.js"
   },

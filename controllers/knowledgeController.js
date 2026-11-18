@@ -210,3 +210,182 @@ export async function deleteArticle(req, res) {
     res.status(500).json({ message: err.message });
   }
 }
+
+
+// ── Q&A entries (manually entered question + answer) ─────────────────────────
+
+const QA_CATEGORIES = ["general", "hours", "location", "contact", "services", "appointments", "team", "pricing", "policies", "faq", "company", "product", "policy", "support"];
+const QA_LANGUAGES = ["", "en", "hi", "gu"];
+
+function cleanList(arr, max = 12, eachMax = 300) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of arr) {
+    const v = String(raw || "").trim().slice(0, eachMax);
+    if (!v || seen.has(v.toLowerCase())) continue;
+    seen.add(v.toLowerCase());
+    out.push(v);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+// POST /api/knowledge/qa
+// Body: { title?, question, answer, variations?, category?, language? }
+export async function createQA(req, res) {
+  try {
+    const { title, question, answer, variations, category, language } = req.body || {};
+
+    const q = String(question || "").trim();
+    const a = String(answer || "").trim();
+    if (!q) return res.status(400).json({ message: "Question is required" });
+    if (!a) return res.status(400).json({ message: "Answer is required" });
+
+    const cat = QA_CATEGORIES.includes(category) ? category : "general";
+    const lang = QA_LANGUAGES.includes(language) ? language : "";
+
+    const article = await KnowledgeArticle.create({
+      entryType: "qa",
+      title: String(title || q).trim().slice(0, 200) || q.slice(0, 200),
+      question: q.slice(0, 1000),
+      answer: a.slice(0, 4000),
+      variations: cleanList(variations),
+      category: cat,
+      language: lang,
+      userId: req.userId,
+    });
+    res.status(201).json(omitFileData(article));
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+}
+
+// PUT /api/knowledge/qa/:id
+// Body: { title?, question, answer, variations?, category?, language?, isActive? }
+export async function updateQA(req, res) {
+  try {
+    const article = await KnowledgeArticle.findOne({ _id: req.params.id, userId: req.userId });
+    if (!article) return res.status(404).json({ message: "Q&A entry not found" });
+    if (article.entryType !== "qa") {
+      return res.status(400).json({ message: "This entry is not a Q&A entry" });
+    }
+
+    const { title, question, answer, variations, category, language, isActive } = req.body || {};
+
+    if (question !== undefined) {
+      const q = String(question).trim();
+      if (!q) return res.status(400).json({ message: "Question cannot be empty" });
+      article.question = q.slice(0, 1000);
+    }
+    if (answer !== undefined) {
+      const a = String(answer).trim();
+      if (!a) return res.status(400).json({ message: "Answer cannot be empty" });
+      article.answer = a.slice(0, 4000);
+    }
+    if (title !== undefined) article.title = String(title).trim().slice(0, 200) || article.question;
+    if (variations !== undefined) article.variations = cleanList(variations);
+    if (category !== undefined && QA_CATEGORIES.includes(category)) article.category = category;
+    if (language !== undefined && QA_LANGUAGES.includes(language)) article.language = language;
+    if (isActive !== undefined) article.isActive = Boolean(isActive);
+
+    await article.save();
+    res.json(omitFileData(article));
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+}
+
+
+// ── Directory entries (persons + departments) ─────────────────────────────────
+
+const DIR_CATEGORIES = ["team", "general"];
+
+// POST /api/knowledge/directory
+// Body: { directoryType, personName?, nameAliases?, designation?, department,
+//         cabin?, directoryNotes?, isInterviewer?, category? }
+export async function createDirectoryEntry(req, res) {
+  try {
+    const {
+      directoryType,
+      personName,
+      nameAliases,
+      designation,
+      department,
+      cabin,
+      directoryNotes,
+      isInterviewer,
+      category,
+    } = req.body || {};
+
+    if (!directoryType || !["person", "department"].includes(directoryType)) {
+      return res.status(400).json({ message: "directoryType must be 'person' or 'department'" });
+    }
+    if (directoryType === "person") {
+      const n = String(personName || "").trim();
+      if (!n) return res.status(400).json({ message: "personName is required for a person entry" });
+    }
+    if (!String(department || "").trim()) {
+      return res.status(400).json({ message: "department is required" });
+    }
+
+    const pName = String(personName || "").trim().slice(0, 200);
+    const title = directoryType === "person"
+      ? pName || String(department || "").trim()
+      : String(department || "").trim();
+
+    const article = await KnowledgeArticle.create({
+      entryType: "directory",
+      directoryType,
+      personName: pName,
+      nameAliases: cleanList(nameAliases, 10, 100),
+      designation: String(designation || "").trim().slice(0, 200),
+      department: String(department || "").trim().slice(0, 200),
+      cabin: String(cabin || "").trim().slice(0, 200),
+      directoryNotes: String(directoryNotes || "").trim().slice(0, 500),
+      isInterviewer: Boolean(isInterviewer),
+      title,
+      category: DIR_CATEGORIES.includes(category) ? category : "team",
+      userId: req.userId,
+    });
+    res.status(201).json(omitFileData(article));
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+}
+
+// PUT /api/knowledge/directory/:id
+export async function updateDirectoryEntry(req, res) {
+  try {
+    const article = await KnowledgeArticle.findOne({ _id: req.params.id, userId: req.userId });
+    if (!article) return res.status(404).json({ message: "Directory entry not found" });
+    if (article.entryType !== "directory") {
+      return res.status(400).json({ message: "This entry is not a directory entry" });
+    }
+
+    const {
+      personName, nameAliases, designation, department,
+      cabin, directoryNotes, isInterviewer, category, isActive,
+    } = req.body || {};
+
+    if (personName !== undefined) article.personName = String(personName).trim().slice(0, 200);
+    if (nameAliases !== undefined) article.nameAliases = cleanList(nameAliases, 10, 100);
+    if (designation !== undefined) article.designation = String(designation).trim().slice(0, 200);
+    if (department !== undefined) article.department = String(department).trim().slice(0, 200);
+    if (cabin !== undefined) article.cabin = String(cabin).trim().slice(0, 200);
+    if (directoryNotes !== undefined) article.directoryNotes = String(directoryNotes).trim().slice(0, 500);
+    if (isInterviewer !== undefined) article.isInterviewer = Boolean(isInterviewer);
+    if (category !== undefined && DIR_CATEGORIES.includes(category)) article.category = category;
+    if (isActive !== undefined) article.isActive = Boolean(isActive);
+
+    // Keep title in sync
+    article.title = article.directoryType === "person"
+      ? (article.personName || article.department)
+      : (article.department || article.title);
+
+    await article.save();
+    res.json(omitFileData(article));
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+}

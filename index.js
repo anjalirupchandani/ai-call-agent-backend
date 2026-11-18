@@ -22,24 +22,15 @@ import { healthCheck } from "./controllers/webhookController.js";
 // Routes
 import authRouter from "./routes/auth.js";
 import dashboardRouter from "./routes/dashboard.js";
-import callsRouter from "./routes/calls.js";
-import templatesRouter from "./routes/templates.js";
-import contactsRouter from "./routes/contacts.js";
+import conversationRouter from "./routes/conversation.js";
 import knowledgeRouter from "./routes/knowledge.js";
 import usersRouter from "./routes/users.js";
-import scheduledCallsRouter from "./routes/scheduledCalls.js";
 import notificationsRouter from "./routes/notifications.js";
-import campaignsRouter from "./routes/campaigns.js";
-import pathwaysRouter from "./routes/pathways.js";
-import agentToolsRouter from "./routes/agentTools.js";
-
-// Appointment scheduler (places the call when the appointment time arrives)
-import { startScheduler } from "./lib/scheduler.js";
 
 // ---- App setup ------------------------------------------------------------
 
 const app = express();
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 3000;
 
 // ---- Connect to database --------------------------------------------------
 
@@ -71,10 +62,6 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Called by the Edesy voice agent mid-call. Must be mounted BEFORE express.json()
-// (it parses its own body) and is protected by X-Tool-Secret, not a user JWT.
-app.use("/api/agent-tools", agentToolsRouter);
-
 app.use(express.json());
 
 // ---- Health & misc top-level endpoints ------------------------------------
@@ -88,15 +75,10 @@ app.use("/api/auth", authRouter);
 // ---- Protected resource routes --------------------------------------------
 
 app.use("/api/dashboard", requireAuth, dashboardRouter);
-app.use("/api/calls", requireAuth, callsRouter);
-app.use("/api/templates", requireAuth, templatesRouter);
-app.use("/api/contacts", requireAuth, contactsRouter);
+app.use("/api/conversation", requireAuth, conversationRouter);
 app.use("/api/knowledge", requireAuth, knowledgeRouter);
 app.use("/api/users", requireAuth, usersRouter);
-app.use("/api/scheduled-calls", requireAuth, scheduledCallsRouter);
 app.use("/api/notifications", requireAuth, notificationsRouter);
-app.use("/api/campaigns", requireAuth, campaignsRouter);
-app.use("/api/pathways", requireAuth, pathwaysRouter);
 
 // ---- Error handler --------------------------------------------------------
 
@@ -112,8 +94,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`ℹ️  Provider: Edesy (voice-agent.edesy.in)`);
-  startScheduler();
+  console.log(`ℹ️  Mode: real-time voice agent (browser STT/TTS + Q&A knowledge base)`);
 });
 
 process.on("uncaughtException", (e) =>
